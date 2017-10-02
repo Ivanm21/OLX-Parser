@@ -3,27 +3,31 @@
 
 import requests as rq
 from bs4 import BeautifulSoup
-import re
 import dateparser
+import ast
+from model import Add
 
-address = 'https://www.olx.ua/nedvizhimost/arenda-kvartir/dolgosrochnaya-arenda-kvartir/kiev/'
 
 
 def get_add_link(startingaddress):
     page = rq.get(startingaddress)
-    soup = BeautifulSoup(page.content, 'html.parser',from_encoding='utf-8')
-    adds_table = soup.find("table",{"id": "offers_table"})
+    soup = BeautifulSoup(page.content, 'html.parser', from_encoding='utf-8')
+    adds_table = soup.findAll("td", {"class": "offer"})
 
-    for a in adds_table.findAll("tr", {"class": "wrap"}):
-        addlink = a.find("a",{"class": "marginright5 link linkWithHash detailsLink"})
+    for a in adds_table:
+        addlink = a.find("a", {"class": "marginright5 link linkWithHash detailsLink"})
         if addlink is not None:
             yield addlink['href']
 
 
 def get_next_page(address):
+    # yeild address if it is first page
+    if '?page=' not in address:
+        yield address
+
     page = rq.get(address)
-    soup = BeautifulSoup(page.content, 'html.parser',from_encoding='utf-8')
-    nextpage = soup.find('span',{"class":"fbold next abs large"})
+    soup = BeautifulSoup(page.content, 'html.parser', from_encoding='utf-8')
+    nextpage = soup.find('span', {"class": "fbold next abs large"})
     if nextpage is not None:
         child = nextpage.find('a')['href']
         if child is not None:
@@ -33,117 +37,193 @@ def get_next_page(address):
 
 
 def parse_add(addlink):
+    addObject = Add.Add(addlink)
     page = rq.get(addlink)
+    soup = BeautifulSoup(page.content, 'html.parser', from_encoding='utf-8')
+
+    # Check if add is promoted
+    addObject.promoted = is_promoted(addlink)
+
+    # Check if Add was [ublished from mobile phone
+    addObject.published_from_mobile = is_published_from_mobile(soup)
+
+    # Get Price Dictionary with Price, Currency, Negotiable
+    priceDic = get_price(soup)
+    addObject.price = priceDic['price']
+    addObject.currency = priceDic['currency']
+    addObject.negotiable = priceDic['negotiable']
+
+    # Get add Text, Title, District
+    addObject.text = get_add_text(soup)
+    addObject.add_title = get_add_title(soup)
+    addObject.district = get_add_district(soup)
+
+    #Get Phone number
+    addObject.phone_number = get_phone_number(addlink)
+
+    # Parsing fields available in details table: type of add, quantity of rooms, type of rent, type of building
+    addObject.addType = get_add_type(soup)
+    addObject.rooms = get_rooms(soup)
+    addObject.building_type = get_building_type(soup)
+
+    # Adding date and number of the add
+    addObject.date = get_add_date(soup)
+    addObject.number = get_add_number(soup)
+
+    # Adding links to images
+    addObject.image_links = get_photo_links(soup)
+
+    return addObject
+
+
+def get_phone_number(address):
+    iD = address[address.find('ID') + 2:address.find('.html')]
+    headers = {'Referer': address}
+
+    s = rq.Session()
+    page = s.get(address)
+
     soup = BeautifulSoup(page.content, 'html.parser',from_encoding='utf-8')
+    phoneToken = soup.find('section', {'id': 'body-container', 'class': 'offer-section'}).findChild(
+        'script').text.strip()
+    phoneToken = phoneToken[phoneToken.find('var phoneToken = \'') + len('var phoneToken = \''):phoneToken.find('\';')]
 
-    price = soup.find('div',{'class':'price-label'}).text.encode('utf-8').replace(" ",'').replace('грн.','')
-    text = soup.find('div',{'class': 'clr','id':'textContent'}).text.encode('utf-8').strip()
+    try:
+        phoneResponse = s.get('https://www.olx.ua/ajax/misc/contact/phone/' + iD + '/?pt=' + phoneToken, headers=headers)
+        phoneResponse.raise_for_status()
+        phone_number = ast.literal_eval(phoneResponse.content.decode('UTF-8'))
+        return phone_number['value']
 
-    detailstable = soup.find('table',{'class':'details fixed marginbott20 margintop5 full'})
+    except rq.exceptions.HTTPError:
+        return(0)
 
+
+def is_promoted(link):
+    promoted = False
+
+    if 'promoted' in link:
+        promoted = True
+
+    return promoted
+
+
+def get_price(soup):
+    priceDict = {'price':0 ,'currency':'uah','negotiable': False, }
+
+    priceElement = soup.find('div', {'class': 'price-label'})
+    if priceElement is not None:
+        if priceElement.find('small') is not None:
+            priceDict['negotiable'] = True
+
+        if 'грн' in priceElement.text:
+            priceDict['currency'] = 'uah'
+
+        if '$' in priceElement.text:
+            priceDict['currency'] = 'usd'
+
+        if '€' in priceElement.text:
+            priceDict['currency'] = 'eur'
+
+        if priceElement is not None:
+            priceDict['price'] = priceElement.text.replace(' ', '').replace('грн.', '').replace('Договорная', '').replace('$', '').strip()
+
+    return priceDict
+
+
+def get_add_text(soup):
+    text = soup.find('div', {'class': 'clr', 'id': 'textContent'}).text.strip()
+    return text
+
+
+def get_add_title(soup):
+    add_title = soup.find('div', {'class': 'offer-titlebox'}).findChild('h1').text.strip()
+    return add_title
+
+def get_add_district(soup):
+    district = soup.find('div', {'class': 'offer-titlebox__details'})\
+        .findChild('a').text.strip()
+    return district
+
+def get_add_type(soup):
+    addType = ''
+    detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
 
     if detailstable.find('th', text='Объявление от') is not None:
         advertizerTable = detailstable.find('th', text='Объявление от').parent
-        addType = advertizerTable.find('td').text.encode('utf-8').strip()
+        addType = advertizerTable.find('td').text.strip()
 
+    return addType
 
-    if detailstable.find('th',text= 'Количество комнат') is not None:
+def get_rooms(soup):
+    rooms = 0
+    detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
+
+    if detailstable.find('th', text='Количество комнат') is not None:
         roomstable = detailstable.find('th', text='Количество комнат').parent
-        rooms = roomstable.find('td').text.encode('utf-8').strip()
+        rooms = roomstable.find('td').text.strip()
 
+    return rooms
+
+def get_rent_type(soup):
+    rent_type = ''
+    detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
 
     if detailstable.find('th', text='Тип аренды') is not None:
         rent_type_table = detailstable.find('th', text='Тип аренды').parent
-        rent_type = rent_type_table.find('td').text.encode('utf-8').strip()
+        rent_type = rent_type_table.find('td').text.strip()
 
+    return rent_type
 
-    if detailstable.find('th',text='Тип') is not None:
+def get_building_type(soup):
+    building_type = ''
+    detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
+
+    if detailstable.find('th', text='Тип') is not None:
         building_type_table = detailstable.find('th', text='Тип').parent
-        building_type = building_type_table.find('td').text.encode('utf-8').strip()
+        building_type = building_type_table.find('td').text.strip()
+
+    return building_type
 
 
-    add_title = soup.find('div',{'class':'offer-titlebox'}).findChild('h1').text.encode('utf-8').strip()
+def get_add_date(soup):
+    # Adding Date when add was created and number of the add.
+    date = ''
+    date_and_number = soup.find('div', {'class': 'offer-titlebox__details'}).findChild('em')
+    if date_and_number is not None:
+        date_and_number = date_and_number.text.strip().replace(' ', '')
+        if '\nв' in date_and_number:
+            date = dateparser.parse(date_and_number[date_and_number.find('\nв') + 3:date_and_number.find(',Номер')])
+        elif ':в' in date_and_number:
+            date = dateparser.parse(date_and_number[date_and_number.find(':в') + 3:date_and_number.find(',Номер')])
 
-    district = soup.find('div',{'class':'offer-titlebox__details'}).findChild('a').text.encode('utf-8').strip()
+    return date
 
-    date_and_number = soup.find('div',{'class':'offer-titlebox__details'}).findChild('em').text.encode('utf-8').strip().replace(' ','')
 
-    date = dateparser.parse(date_and_number[date_and_number.find(':в')+3:date_and_number.find(',Номер')])
-    number = date_and_number[date_and_number.find('объявления:')+ len('объявления:'):]
+def is_published_from_mobile(soup):
+    published_from_mobile = False
+    mobileicon = soup.find('i', {'data-icon': 'mobile'})
+    mobileappslink = soup.find('a',{'href':'https://www.olx.ua/mobileapps/'})
+    if (mobileicon  is not None) & (mobileappslink is not None):
+        published_from_mobile = True
 
+    return published_from_mobile
+
+def get_add_number(soup):
+    # Adding Date when add was created and number of the add.
+    number = ''
+    date_and_number = soup.find('div', {'class': 'offer-titlebox__details'}).findChild('em')
+    if date_and_number is not None:
+        date_and_number = date_and_number.text.strip().replace(' ', '')
+        number = date_and_number[date_and_number.find('объявления:') + len('объявления:'):]
+
+    return number
+
+
+def get_photo_links(soup):
     image_links = []
-    images = soup.findAll('div',{'class':'tcenter img-item'})
+    images = soup.findAll('div', {'class': 'tcenter img-item'})
     for i in images:
         link = i.find('img')
         image_links.append(link['src'])
 
-
-
-    print (image_links)
-
-
-# parse_add('https://www.olx.ua/obyavlenie/1-komnatnaya-metro-10-minut-peshim-shagom-IDuX0sg.html#39f9431a35;promoted')
-
-
-
-
-pages = get_next_page(address)
-# for p in pages:
-#     print (p)
-# links = get_add_link(pages.next())
-# for p in pages:
-#     print(p)
-
-# for p in pages:
-#     links = get_add_link(p)
-#     for l in links:
-#         print l
-
-
-
-# def getaddlinks(page):
-#     soup = BeautifulSoup(page.content, 'html.parser')
-#     offers = soup.find("table",{"id":"offers_table"})
-#
-#     ListOfHrefs = [[1,1]]
-#     for a in offers.findAll("tr", {"class": "wrap"}):
-#         link = a.find("a",{"class":"marginright5 link linkWithHash detailsLink"})
-#         date = a.find("p",{"class":"color-9 lheight16 marginbott5 x-normal"})
-#         tup = (link['href'],date.text.encode('utf-8'))
-#         ListOfHrefs.append(tup)
-#
-#     return ListOfHrefs
-#
-# def getNextPage(page):
-#     soup = BeautifulSoup(page.content,'html.parser')
-#     nextpage = soup.find('span',{"class":"fbold next abs large"})
-#     child = nextpage.find('a')['href']
-#     return child
-#
-# def writeToCSV(page,file):
-#     with open( file, "wb") as csv_file:
-#         writer = csv.writer(csv_file, delimiter=',')
-#         for line in page:
-#             writer.writerow(line)
-#
-#
-# list = getaddlinks(page)
-# writeToCSV(list,"/Users/Ivanm/Desktop/test.csv")
-
-
-
-
-# headers = {'Referer':'https://www.olx.ua/obyavlenie/1-komnatnaya-metro-10-minut-peshim-shagom-IDuX0sg.html'}
-#
-# s = rq.Session()
-# s.headers.update({'User-Agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/61.0.3163.100 Safari/537.36'})
-#
-# page = s.get('https://www.olx.ua/ajax/misc/contact/phone/uX0sg/?pt=3df800a1c84ac125690512a3d9e69fd0f5ab2db63e64beeab7ba5dabf95fc9a26c8d83c9b0062ed979b033ff142bee179b7db9800ccda3b488d87cd7b9062fe6',headers=headers)
-#
-# phoneToken = '071bac232eff09666fdf4eeb268485df9a6d174dcca3a6eae6b52c9119e1751a9f899b94e21a242ae8147a36b3dd442ddac4e55334b51cff12aa49b021cdd7fc'
-#
-# print(page.content)
-# print (page.headers)
-# print (page.cookies)
-# print (page.raw)
-
+    return image_links
