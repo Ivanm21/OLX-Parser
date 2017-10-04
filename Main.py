@@ -1,7 +1,7 @@
 import Parser as parser
 import Exporter as exporter
 
-address = 'https://www.olx.ua/nedvizhimost/arenda-kvartir/dolgosrochnaya-arenda-kvartir/kiev/'
+address = 'https://www.olx.ua/nedvizhimost/arenda-kvartir/dolgosrochnaya-arenda-kvartir/kiev/?page=115'
 file = "/Users/Ivanm/Desktop/olx_v3.xlsx"
 pages = parser.get_next_page(address)
 

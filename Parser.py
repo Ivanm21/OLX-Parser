@@ -84,9 +84,13 @@ def get_phone_number(address):
     page = s.get(address)
 
     soup = BeautifulSoup(page.content, 'html.parser',from_encoding='utf-8')
-    phoneToken = soup.find('section', {'id': 'body-container', 'class': 'offer-section'}).findChild(
-        'script').text.strip()
-    phoneToken = phoneToken[phoneToken.find('var phoneToken = \'') + len('var phoneToken = \''):phoneToken.find('\';')]
+
+    try:
+        phoneToken = soup.find('section', {'id': 'body-container', 'class': 'offer-section'}).findChild(
+            'script').text.strip()
+        phoneToken = phoneToken[phoneToken.find('var phoneToken = \'') + len('var phoneToken = \''):phoneToken.find('\';')]
+    except AttributeError:
+        return 0
 
     try:
         phoneResponse = s.get('https://www.olx.ua/ajax/misc/contact/phone/' + iD + '/?pt=' + phoneToken, headers=headers)
@@ -95,7 +99,7 @@ def get_phone_number(address):
         return phone_number['value']
 
     except rq.exceptions.HTTPError:
-        return(0)
+        return 0
 
 
 def is_promoted(link):
@@ -108,79 +112,102 @@ def is_promoted(link):
 
 
 def get_price(soup):
-    priceDict = {'price':0 ,'currency':'uah','negotiable': False, }
+    price_dict = {'price':0 ,'currency':'uah','negotiable': False, }
 
-    priceElement = soup.find('div', {'class': 'price-label'})
-    if priceElement is not None:
-        if priceElement.find('small') is not None:
-            priceDict['negotiable'] = True
+    price_element = soup.find('div', {'class': 'price-label'})
+    if price_element is not None:
+        if price_element.find('small') is not None:
+            price_element = price_element.text.replace('Договорная', '')
+            price_dict['negotiable'] = True
 
-        if 'грн' in priceElement.text:
-            priceDict['currency'] = 'uah'
+        if 'грн' in price_element.text:
+            price_element = price_element.text.replace('грн.', '')
+            price_dict['currency'] = 'uah'
 
-        if '$' in priceElement.text:
-            priceDict['currency'] = 'usd'
+        if '$' in price_element.text:
+            price_element = price_element.text.replace('$', '')
+            price_dict['currency'] = 'usd'
 
-        if '€' in priceElement.text:
-            priceDict['currency'] = 'eur'
+        if '€' in price_element.text:
+            price_element = price_element.text.replace('€', '')
+            price_dict['currency'] = 'eur'
 
-        if priceElement is not None:
-            priceDict['price'] = priceElement.text.replace(' ', '').replace('грн.', '').replace('Договорная', '').replace('$', '').strip()
+        price_dict['price'] = price_element.text.replace(' ', '').strip()
 
-    return priceDict
+    return price_dict
 
 
 def get_add_text(soup):
-    text = soup.find('div', {'class': 'clr', 'id': 'textContent'}).text.strip()
-    return text
+    try:
+        text = soup.find('div', {'class': 'clr', 'id': 'textContent'}).text.strip()
+        return text
+    except AttributeError:
+        text = ''
+        return text
 
 
 def get_add_title(soup):
-    add_title = soup.find('div', {'class': 'offer-titlebox'}).findChild('h1').text.strip()
-    return add_title
+    try:
+        add_title = soup.find('div', {'class': 'offer-titlebox'}).findChild('h1').text.strip()
+        return add_title
+    except AttributeError:
+        add_title = '-'
+        return add_title
+
 
 def get_add_district(soup):
-    district = soup.find('div', {'class': 'offer-titlebox__details'})\
-        .findChild('a').text.strip()
+    try:
+        district = soup.find('div', {'class': 'offer-titlebox__details'})\
+            .findChild('a').text.strip()
+        return district
+    except AttributeError:
+        district = ''
     return district
+
 
 def get_add_type(soup):
     addType = ''
-    detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
-
-    if detailstable.find('th', text='Объявление от') is not None:
+    try:
+        detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
         advertizerTable = detailstable.find('th', text='Объявление от').parent
         addType = advertizerTable.find('td').text.strip()
+    except AttributeError:
+        return addType
 
     return addType
 
+
 def get_rooms(soup):
     rooms = 0
-    detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
-
-    if detailstable.find('th', text='Количество комнат') is not None:
+    try:
+        detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
         roomstable = detailstable.find('th', text='Количество комнат').parent
         rooms = roomstable.find('td').text.strip()
+    except AttributeError:
+        return rooms
 
     return rooms
 
+
 def get_rent_type(soup):
     rent_type = ''
-    detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
-
-    if detailstable.find('th', text='Тип аренды') is not None:
+    try:
+        detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
         rent_type_table = detailstable.find('th', text='Тип аренды').parent
         rent_type = rent_type_table.find('td').text.strip()
+    except AttributeError:
+        return rent_type
 
     return rent_type
 
 def get_building_type(soup):
     building_type = ''
-    detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
-
-    if detailstable.find('th', text='Тип') is not None:
+    try:
+        detailstable = soup.find('table', {'class': 'details fixed marginbott20 margintop5 full'})
         building_type_table = detailstable.find('th', text='Тип').parent
         building_type = building_type_table.find('td').text.strip()
+    except AttributeError:
+        return building_type
 
     return building_type
 
@@ -188,13 +215,15 @@ def get_building_type(soup):
 def get_add_date(soup):
     # Adding Date when add was created and number of the add.
     date = ''
-    date_and_number = soup.find('div', {'class': 'offer-titlebox__details'}).findChild('em')
-    if date_and_number is not None:
+    try:
+        date_and_number = soup.find('div', {'class': 'offer-titlebox__details'}).findChild('em')
         date_and_number = date_and_number.text.strip().replace(' ', '')
         if '\nв' in date_and_number:
             date = dateparser.parse(date_and_number[date_and_number.find('\nв') + 3:date_and_number.find(',Номер')])
         elif ':в' in date_and_number:
             date = dateparser.parse(date_and_number[date_and_number.find(':в') + 3:date_and_number.find(',Номер')])
+    except AttributeError:
+        return date
 
     return date
 
@@ -208,14 +237,15 @@ def is_published_from_mobile(soup):
 
     return published_from_mobile
 
+
 def get_add_number(soup):
     # Adding Date when add was created and number of the add.
     number = ''
-    date_and_number = soup.find('div', {'class': 'offer-titlebox__details'}).findChild('em')
-    if date_and_number is not None:
-        date_and_number = date_and_number.text.strip().replace(' ', '')
+    try:
+        date_and_number = soup.find('div', {'class': 'offer-titlebox__details'}).findChild('em').text.strip().replace(' ', '')
         number = date_and_number[date_and_number.find('объявления:') + len('объявления:'):]
-
+    except AttributeError:
+        return number
     return number
 
 
